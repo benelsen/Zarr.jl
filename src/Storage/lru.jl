@@ -36,6 +36,6 @@ function readchunk!(a::DenseArray,z::ZArray{<:Any,N,<:Zarr.Compressor,<:LRUStore
     else
         zuncompress!(a, curchunk, z.metadata.compressor, z.metadata.filters)
     end
-    z.storage.lru[k] = a
+    z.storage.lru[k] = copy(a)
     a
 end
