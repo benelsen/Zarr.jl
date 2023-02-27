@@ -122,13 +122,22 @@ https://zarr.readthedocs.io/en/stable/spec/v2.html#metadata
 """
 struct Metadata{T, N, C, F}
     zarr_format::Int
-    shape::Ref{NTuple{N, Int}}
+    shape::Base.RefValue{NTuple{N, Int}}
     chunks::NTuple{N, Int}
     dtype::String  # structured data types not yet supported
     compressor::C
     fill_value::Union{T, Nothing}
     order::Char
     filters::F  # not yet supported
+    function Metadata{T2, N, C, F}(zarr_format, shape, chunks, dtype, compressor,fill_value, order, filters) where {T2,N,C,F}
+        #We currently only support version 
+        zarr_format == 2 || throw(ArgumentError("Zarr.jl currently only support v2 of the protocol"))
+        #Do some sanity checks to make sure we have a sane array
+        any(<(0), shape) && throw(ArgumentError("Size must be positive"))
+        any(<(1), chunks) && throw(ArgumentError("Chunk size must be >= 1 along each dimension"))
+        order === 'C' || throw(ArgumentError("Currently only 'C' storage order is supported"))
+        new{T2, N, C, F}(zarr_format, Base.RefValue{NTuple{N,Int}}(shape), chunks, dtype, compressor,fill_value, order, filters)
+    end
 end
 
 #To make unit tests pass with ref shape
@@ -151,9 +160,10 @@ function Metadata(A::AbstractArray{T, N}, chunks::NTuple{N, Int};
         compressor::C=BloscCompressor(),
         fill_value::Union{T, Nothing}=nothing,
         order::Char='C',
-        filters::Nothing=nothing
+        filters::Nothing=nothing,
+        fill_as_missing = false,
     ) where {T, N, C}
-    T2 = fill_value === nothing ? T : Union{T,Missing}
+    T2 = (fill_value === nothing || !fill_as_missing) ? T : Union{T,Missing}
     Metadata{T2, N, C, typeof(filters)}(
         zarr_format,
         size(A),
@@ -166,10 +176,10 @@ function Metadata(A::AbstractArray{T, N}, chunks::NTuple{N, Int};
     )
 end
 
-Metadata(s::Union{AbstractString, IO}) = Metadata(JSON.parse(s))
+Metadata(s::Union{AbstractString, IO},fill_as_missing) = Metadata(JSON.parse(s),fill_as_missing)
 
 "Construct Metadata from Dict"
-function Metadata(d::AbstractDict)
+function Metadata(d::AbstractDict, fill_as_missing)
     # create a Metadata struct from it
 
     compdict = d["compressor"]
@@ -184,7 +194,7 @@ function Metadata(d::AbstractDict)
 
     fv = fill_value_decoding(d["fill_value"], T)
 
-    TU = fv === nothing ? T : Union{T,Missing}
+    TU = (fv === nothing || !fill_as_missing) ? T : Union{T,Missing}
 
     Metadata{TU, N, C, F}(
         d["zarr_format"],

@@ -42,6 +42,11 @@ function test_store_common(ds)
   @test !Zarr.isinitialized(ds,"bar",CartesianIndex((0,0,0)))
   @test !Zarr.isinitialized(ds,"bar/0.0.0")
   ds["bar/0.0.0"] = data
+  #Add tests for empty storage
+  @test Zarr.isemptysub(ds,"ba")
+  @test Zarr.isemptysub(ds,"ba/")
+  @test !Zarr.isemptysub(ds,"bar")
+  @test !Zarr.isemptysub(ds,"bar/")
 end
 
 @testset "DirectoryStore" begin
@@ -92,7 +97,7 @@ end
   @test all(iszero,a2[1:10,1])
   @test_throws ErrorException a2[1,1] = 5
   @test_throws ErrorException delete!(newstore,"foo/0.0")
-  @test isequal(a2[1,1000], missing)
+  @test isnan(a2[1,1000])
   @test storagesize(a2) == 83002
 end
 
@@ -101,19 +106,23 @@ end
   chunks = (5,10)
   metadata = Zarr.Metadata(A, chunks; fill_value=-1.5)
   using Minio
-  s = Minio.Server(joinpath("./",tempname()), address="localhost:9001")
-  run(s, wait=false)
-  cfg = MinioConfig("http://localhost:9001")
-  Zarr.AWS.global_aws_config(cfg)
-  Zarr.S3.create_bucket("zarrdata")
-  ds = S3Store("zarrdata")
-  test_store_common(ds)
-  @test sprint(show, ds) == "S3 Object Storage"
-  kill(s)
+  if !isnothing(Minio.minio())
+    s = Minio.Server(joinpath("./",tempname()), address="localhost:9001")
+    run(s, wait=false)
+    cfg = MinioConfig("http://localhost:9001")
+    Zarr.AWSS3.global_aws_config(cfg)
+    Zarr.AWSS3.S3.create_bucket("zarrdata")
+    ds = S3Store("zarrdata")
+    test_store_common(ds)
+    @test sprint(show, ds) == "S3 Object Storage"
+    kill(s)
+  else
+    @warn "Skipping Minio Tests, because the package was not built correctly"
+  end
 end
 
 @testset "AWS S3 Storage" begin
-  Zarr.AWS.global_aws_config(Zarr.AWS.AWSConfig(creds=nothing, region="eu-west-2"))
+  Zarr.AWSS3.AWS.global_aws_config(Zarr.AWSS3.AWS.AWSConfig(creds=nothing, region="eu-west-2"))
   S3,p = Zarr.storefromstring("s3://zarr-demo/store/foo")
   @test storagesize(S3,p) == 0
   @test Zarr.is_zgroup(S3,p) == true
@@ -137,10 +146,10 @@ end
     g = zopen(cmip6,path=p)
     arr = g["psl"]
     @test size(arr) == (288, 192, 97820)
-    @test eltype(arr) == Union{Missing, Float32}
+    @test eltype(arr) == Float32
     lat = g["lat"]
     @test size(lat) == (192,)
-    @test eltype(lat) == Union{Missing, Float64}
+    @test eltype(lat) == Float64
     @test lat[1:4] == [-90.0,-89.05759162303664,-88.1151832460733,-87.17277486910994]
   end
 end

@@ -31,9 +31,13 @@ end
         @test z.metadata.compressor.blocksize === 0
         @test z.metadata.compressor.clevel === 5
         @test z.metadata.compressor.cname === "lz4"
-        @test z.metadata.compressor.shuffle === true
+        @test z.metadata.compressor.shuffle === 1
         @test z.attrs == Dict{Any, Any}()
         @test z.writeable === true
+        @test_throws ArgumentError zzeros(Int64,2,3, chunks = (0,1))
+        @test_throws ArgumentError zzeros(Int64,0,-1)
+        @test_throws ArgumentError Zarr.Metadata(zeros(2,2), (2,2), zarr_format = 3)
+        @test_throws ArgumentError Zarr.Metadata(zeros(2,2), (2,2), order = 'F')
     end
 
     @testset "methods" begin
@@ -45,6 +49,8 @@ end
         @test ndims(z) === 2
         @test size(z) === (2, 3)
         @test size(z, 2) === 3
+        @inferred size(z)
+        @inferred size(z, 2)
         @test length(z) === 2 * 3
         @test lastindex(z, 2) === 3
         @test Zarr.zname(z) === "root"
@@ -124,7 +130,7 @@ end
         @test metadata.filters === nothing
 
         jsonstr = json(metadata)
-        metadata_cycled = Zarr.Metadata(jsonstr)
+        metadata_cycled = Zarr.Metadata(jsonstr,false)
         @test metadata == metadata_cycled
     end
 
@@ -160,7 +166,7 @@ end
   @test a[5:6,5:6] == [1 0; 0 0]
   @test a[9:10,9:10] == fill(2,2,2)
   # Now with FillValue
-  amiss = zzeros(Int64, 10,10,chunks=(5,2), fill_value=-1)
+  amiss = zzeros(Int64, 10,10,chunks=(5,2), fill_value=-1, fill_as_missing=true)
   amiss[:,1] = 1:10
   amiss[:,2] .= missing
   amiss[1:3,4] = [1,missing,3]
@@ -172,7 +178,18 @@ end
   @test all(i->isequal(i...),zip(amiss[1:3,4],[1,missing,3]))
   # Test that chunk containing only missings is not initialized
   @test !Zarr.isinitialized(amiss.storage,Zarr.citostring(CartesianIndex((1,5))))
+  #
+  amiss = zcreate(Int64, 10,10,chunks=(5,2), fill_value=-1, fill_as_missing=false)
+  amiss[:,1] = 1:10
+  amiss[1:3,4] = [1,-1,3]
+  amiss[1,10] = 5
+  amiss[1:5,9:10] .= -1
 
+  @test amiss[:,1] == 1:10
+  @test all(==(-1),amiss[:,2])
+  @test all(i->isequal(i...),zip(amiss[1:3,4],[1,-1,3]))
+  # Test that chunk containing only fill values is not initialized
+  @test !Zarr.isinitialized(amiss.storage,Zarr.citostring(CartesianIndex((1,5))))
 end
 
 @testset "resize" begin
@@ -181,7 +198,7 @@ end
   @test size(a)==(5,4)
   resize!(a,10,10)
   @test size(a)==(10,10)
-  @test all(ismissing,a[6:end,:])
+  @test all(==(-1),a[6:end,:])
   xapp = rand(1:10,10,20)
   append!(a,xapp)
   @test size(a)==(10,30)
@@ -197,6 +214,7 @@ end
   append!(a,vcat(singlerow', singlerow'), dims=1)
   @test size(a)==(13,31)
   @test a[12:13,:]==vcat(singlerow', singlerow')
+  @test_throws ArgumentError resize!(a,(-1,2))
 end
 
 @testset "string array getindex/setindex" begin
@@ -223,6 +241,22 @@ end
   z2 = ZArray(reshape([a,b,Float64[],c,Float64[],d],2,3))
   @test z[:,:] == z2[:,:]
 end
+
+@testset "Fillvalue as missing" begin 
+    p = tempname()
+    a = zcreate(Int,2,3,fill_value=-1,fill_as_missing=true,path=p)
+    @test all(ismissing,a[:,:])
+    @test eltype(a) == Union{Int,Missing}
+    a[:,1] .= 5
+    b = zopen(p,fill_as_missing=true)
+    @test eltype(b) == Union{Int, Missing}
+    @test all(ismissing,b[:,2:3])
+    @test all(==(5),b[:,1])
+    c = zopen(p)
+    @test eltype(c) == Int
+    @test all(==(-1),c[:,2:3])
+    @test all(==(5),c[:,1])
+  end
 
 include("storage.jl")
 
